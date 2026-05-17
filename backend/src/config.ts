@@ -1,0 +1,50 @@
+/**
+ * Single source of truth for runtime configuration. Read env once at
+ * startup, validate, freeze. Anything that needs config imports from here
+ * instead of reading process.env directly, so there's exactly one place
+ * to look when something's misconfigured.
+ */
+
+import path from "node:path";
+
+export interface Config {
+  readonly port: number;
+  readonly cardsDir: string;
+  readonly dbPath: string;
+  readonly corsOrigin: string;
+  readonly logLevel: "error" | "warn" | "info" | "debug";
+}
+
+function envStr(key: string, fallback: string): string {
+  const v = process.env[key];
+  return v && v.length > 0 ? v : fallback;
+}
+
+function envInt(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) {
+    throw new Error(`Env var ${key}=${v} is not an integer`);
+  }
+  return n;
+}
+
+function envLogLevel(): Config["logLevel"] {
+  const v = (process.env["LOG_LEVEL"] ?? "info").toLowerCase();
+  if (v === "error" || v === "warn" || v === "info" || v === "debug") return v;
+  throw new Error(`LOG_LEVEL must be one of error|warn|info|debug, got ${v}`);
+}
+
+const defaultCardsDir =
+  process.platform === "win32" ? "C:\\dev\\todo" : path.resolve("./todo");
+
+const defaultDbPath = path.resolve("./data/board.sqlite");
+
+export const config: Config = Object.freeze({
+  port: envInt("PORT", 4070),
+  cardsDir: envStr("CARDS_DIR", defaultCardsDir),
+  dbPath: envStr("DB_PATH", defaultDbPath),
+  corsOrigin: envStr("CORS_ORIGIN", "http://localhost:5173"),
+  logLevel: envLogLevel(),
+});
