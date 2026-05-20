@@ -18,6 +18,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Vite 5.4.12+ rejects unknown Host headers by default. The quick
+    // tunnel hands out *.trycloudflare.com hostnames per run, so allow
+    // the whole subtree. Loopback names stay for direct local access.
+    allowedHosts: [".trycloudflare.com", "localhost", "127.0.0.1"],
     proxy: {
       "/api": {
         target: "http://localhost:4070",
