@@ -14,7 +14,8 @@
     "test": "node --import tsx --test src/routes/stories.test.ts",
     "create-token": "tsx scripts/create-token.ts",
     "list-tokens": "tsx scripts/list-tokens.ts",
-    "revoke-token": "tsx scripts/revoke-token.ts"
+    "revoke-token": "tsx scripts/revoke-token.ts",
+    "seed": "tsx scripts/seed-cards.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
