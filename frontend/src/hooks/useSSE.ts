@@ -10,14 +10,16 @@
 
 import { useEffect } from "react";
 
-import { api } from "../lib/api";
+import { api, type CardEventRow } from "../lib/api";
 import { getToken } from "../lib/auth";
+import { publish as publishCardEvent } from "../lib/cardEventBus";
 import { useStore } from "../state/store";
 
 interface EventEnvelope {
   type: string;
   cardId?: string;
   status?: string;
+  event?: CardEventRow;
 }
 
 export function useSSE(authed: boolean) {
@@ -61,6 +63,9 @@ export function useSSE(authed: boolean) {
         case "card-removed":
           if (typeof evt.cardId === "string") remove(evt.cardId);
           break;
+        case "card-event-added":
+          if (evt.event) publishCardEvent(evt.event);
+          break;
         case "heartbeat":
         default:
           break;
@@ -72,6 +77,9 @@ export function useSSE(authed: boolean) {
     es.addEventListener("card-updated", (ev: MessageEvent<string>) => onMessage(ev.data));
     es.addEventListener("card-removed", (ev: MessageEvent<string>) => onMessage(ev.data));
     es.addEventListener("card-state-changed", (ev: MessageEvent<string>) =>
+      onMessage(ev.data)
+    );
+    es.addEventListener("card-event-added", (ev: MessageEvent<string>) =>
       onMessage(ev.data)
     );
     es.addEventListener("heartbeat", () => {
