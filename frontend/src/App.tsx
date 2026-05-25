@@ -15,6 +15,7 @@ import { api } from "./lib/api";
 import { filtersFromParams, filtersToParams, useFilters } from "./state/filters";
 import { Kanban } from "./routes/Kanban";
 import { Retros } from "./routes/Retros";
+import { SprintDetail } from "./routes/SprintDetail";
 import { SprintPlanner } from "./routes/SprintPlanner";
 import { SubmitStory } from "./routes/SubmitStory";
 
@@ -92,6 +93,7 @@ export function App() {
           />
           <Route path="/submit" element={<SubmitStory />} />
           <Route path="/sprints" element={<SprintPlanner />} />
+          <Route path="/sprints/:id" element={<SprintDetail />} />
           <Route path="/retros" element={<Retros />} />
         </Routes>
       </main>
