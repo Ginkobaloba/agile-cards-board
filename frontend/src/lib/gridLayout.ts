@@ -184,6 +184,64 @@ export function snapStakes(yNorm: number): Stakes {
 }
 
 /**
+ * Clamp to [0, 1], collapsing non-finite inputs to 0 so a bad delta can
+ * never propagate a NaN into a coordinate.
+ */
+export function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * Coordinate flips between math-Y (0 = bottom, 1 = top, the convention
+ * this module uses) and screen-Y (0 = top, 1 = bottom, what the DOM and
+ * dnd-kit's delta speak). They're involutions, but naming both makes the
+ * call sites in the drag handler read in the direction they convert.
+ */
+export function screenYFromMath(yMath: number): number {
+  return 1 - yMath;
+}
+export function mathYFromScreen(yScreen: number): number {
+  return 1 - yScreen;
+}
+
+export interface RestakeInput {
+  /** Current math-Y of the dragged point in [0, 1] (0 = low, 1 = high). */
+  yNorm: number;
+  /** dnd-kit's `delta.y` in screen pixels (positive = dragged downward). */
+  deltaYPx: number;
+  /** Pixel height of the plot, from its bounding rect at drop time. */
+  plotHeightPx: number;
+  /** The card's current stakes, already lowercased, or null if unset. */
+  currentStakes: string | null;
+}
+
+/**
+ * Decide what stakes value (if any) a drag should write back. Pure, so
+ * the Grid component's drag handler stays a thin shell over this and the
+ * coordinate math is unit-tested without a DOM or a real dnd-kit event.
+ *
+ * Returns null when there is nothing to write: a zero/invalid plot
+ * height (can't translate the delta into a fraction), or a drag that
+ * lands in the same bucket the card already has (avoid a needless disk
+ * write and watcher churn).
+ */
+export function restakeFromDrag(
+  input: RestakeInput
+): { targetStakes: Stakes } | null {
+  const { yNorm, deltaYPx, plotHeightPx, currentStakes } = input;
+  if (!Number.isFinite(plotHeightPx) || plotHeightPx <= 0) return null;
+  // dnd-kit's delta is in screen pixels. Convert to a plot-relative
+  // fraction, apply it in screen space, then flip back to math space.
+  const dyFrac = deltaYPx / plotHeightPx;
+  const newYNormScreen = clamp01(screenYFromMath(yNorm) + dyFrac);
+  const newYNorm = mathYFromScreen(newYNormScreen);
+  const targetStakes = snapStakes(newYNorm);
+  if (targetStakes === currentStakes) return null;
+  return { targetStakes };
+}
+
+/**
  * Stable color for a project key, picked from a 12-slot palette via a
  * djb2 hash so the same project always renders the same color across
  * sessions. The "Unassigned" bucket gets a neutral muted swatch so it

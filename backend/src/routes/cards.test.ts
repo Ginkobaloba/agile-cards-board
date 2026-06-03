@@ -304,6 +304,46 @@ describe("PATCH /api/cards/:id/frontmatter", () => {
     }
   });
 
+  test("preserves trailing # comments and surrounding whitespace on update", async () => {
+    const srv = await startTestServer();
+    try {
+      // Hand-write a card whose stakes line has a trailing comment we
+      // expect to survive across a PATCH. Use a fresh id so we don't
+      // collide with the cards from earlier tests.
+      const file = path.join(tmpRoot, "backlog", "test-comment.md");
+      fs.writeFileSync(
+        file,
+        [
+          "---",
+          "id: test-comment",
+          "title: Comment Preservation",
+          "status: backlog",
+          "stakes: low   # guessed by the planner",
+          "---",
+          "",
+          "Body.",
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+      // Re-bootstrap the index since we wrote outside the watcher.
+      const watcher2 = cardsFs.startWatcher();
+      await watcher2.close();
+
+      const r = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-comment/frontmatter`,
+        { stakes: "high" }
+      );
+      assert.equal(r.status, 200);
+      const raw = fs.readFileSync(file, "utf8");
+      // The exact spacing and the trailing comment should be intact.
+      assert.match(raw, /^stakes: high\s{3}# guessed by the planner$/m);
+    } finally {
+      await srv.close();
+    }
+  });
+
   test("rejects an empty patch body", async () => {
     const srv = await startTestServer();
     try {

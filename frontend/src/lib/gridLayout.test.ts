@@ -145,6 +145,22 @@ describe("normalize", () => {
     const out = normalize([7, 7, 7], "ordinal");
     expect(out).toEqual([0.5, 0.5, 0.5]);
   });
+
+  it("ordinal: mixed nulls and real values preserves positions", () => {
+    const out = normalize([null, 2, 5, null, 9], "ordinal");
+    // unique reals: [2, 5, 9] -> 0, 0.5, 1
+    expect(out).toEqual([null, 0, 0.5, null, 1]);
+  });
+
+  it("log: clamps negative inputs to 0 rather than NaN-ing the range", () => {
+    // -5 should be treated as 0 under the log branch (clamped). The
+    // function shouldn't produce NaN or Infinity.
+    const out = normalize([-5, 10, 100], "log");
+    expect(out.every((v) => v === null || Number.isFinite(v))).toBe(true);
+    // -5 (clamped to 0) is the minimum after transform.
+    expect(out[0]).toBe(0);
+    expect(out[2]).toBe(1);
+  });
 });
 
 describe("defaultScaleFor", () => {
@@ -199,6 +215,16 @@ describe("snapStakes", () => {
 
   it("STAKES_ORDER is the canonical low->high ordering", () => {
     expect(STAKES_ORDER).toEqual(["low", "medium", "high"]);
+  });
+
+  it("0.25 sits on the low/medium boundary -- pins JS Math.round tie behavior", () => {
+    // Math.round(0.25 * 2) = Math.round(0.5) = 1 in JS (rounds half away
+    // from zero), so y=0.25 lands in medium. If a future JS change ever
+    // alters this, the grid's tier-edit behavior at the 25%-line would
+    // flip silently -- this test pins it.
+    expect(snapStakes(0.25)).toBe("medium");
+    // Symmetric upper boundary.
+    expect(snapStakes(0.75)).toBe("high");
   });
 });
 

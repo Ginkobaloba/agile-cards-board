@@ -22,7 +22,7 @@ import {
   normalize,
   projectColor,
   QUADRANT_LABEL,
-  snapStakes,
+  restakeFromDrag,
   STAKES_ORDER,
 } from "../lib/gridLayout";
 import { cardMatchesFilters, useFilters } from "../state/filters";
@@ -99,49 +99,68 @@ export function Grid({ rates }: Props) {
   // re-reads at the moment of the drop.
   const plotRef = useRef<HTMLDivElement | null>(null);
 
+  // The DOM fires onClick after pointerup, by which point dnd-kit has
+  // already set isDragging back to false. Without a guard the tile's
+  // onClick opens the card modal at the end of every real drag. Set
+  // this ref in onDragEnd whenever the user actually moved, then clear
+  // it on the next frame -- the click event fires synchronously
+  // before that, so the guard catches the spurious open.
+  const justDraggedRef = useRef(false);
+
   const onDragEnd = async (e: DragEndEvent): Promise<void> => {
     const id = String(e.active.id);
     const row = plotted.find((r) => r.card.id === id);
     if (!row) return;
+
+    const moved = e.delta.x !== 0 || e.delta.y !== 0;
+    if (moved) {
+      // Suppress the onClick that DOM will fire after pointerup.
+      // requestAnimationFrame clears the flag AFTER the click event
+      // has resolved on the next frame.
+      justDraggedRef.current = true;
+      requestAnimationFrame(() => {
+        justDraggedRef.current = false;
+      });
+    }
 
     const plot = plotRef.current;
     if (!plot) return;
     const rect = plot.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
 
-    // dnd-kit's delta is in viewport pixels. Convert to plot-relative
-    // [0, 1] coordinates, then flip Y (screen-Y grows downward, our
-    // math-Y grows upward).
-    const dxFrac = e.delta.x / rect.width;
-    const dyFrac = e.delta.y / rect.height;
-    const newXNorm = clamp01(row.xNorm + dxFrac);
-    const newYNormScreen = clamp01(screenYFromMath(row.yNorm) + dyFrac);
-    const newYNorm = mathYFromScreen(newYNormScreen);
-
-    if (!yEditable) {
-      // Drag had no write-side effect. We still consumed it so the
-      // user can see they moved the card -- but no PATCH. Leave a
-      // brief inline hint so it's not silent.
-      setPatchError(
-        "drag-edit is enabled only when Y axis is Stakes (v1). Restore the card's position by reloading."
-      );
+    if (!yEditable || !moved) {
+      // Drag was either inert (Y axis not editable) or a no-move
+      // jiggle. Either way, nothing to write. The toolbar already
+      // shows the "drag = no-op (v1)" hint for non-editable Y, so we
+      // don't need a transient error toast on every drop.
       return;
     }
 
-    const targetStakes = snapStakes(newYNorm);
-    const currentStakes = typeof row.card.frontmatter["stakes"] === "string"
-      ? (row.card.frontmatter["stakes"] as string).toLowerCase()
-      : null;
-    if (targetStakes === currentStakes) {
-      // No effective change. Avoid an unnecessary disk write.
-      void newXNorm; // explicitly discard, x-edit is v1.1
+    // The coordinate math + snap + no-op detection all live in the pure
+    // restakeFromDrag helper so they can be unit-tested without a DOM.
+    // This handler just feeds it the drop geometry and acts on the result.
+    const currentStakes =
+      typeof row.card.frontmatter["stakes"] === "string"
+        ? (row.card.frontmatter["stakes"] as string).toLowerCase()
+        : null;
+    const decision = restakeFromDrag({
+      yNorm: row.yNorm,
+      deltaYPx: e.delta.y,
+      plotHeightPx: rect.height,
+      currentStakes,
+    });
+    if (!decision) {
+      // Nothing to write: same bucket, or a degenerate plot height.
       return;
     }
+    const targetStakes = decision.targetStakes;
 
-    // Optimistic update. SSE will reconcile in case our snap was wrong.
+    // Snapshot the pre-drag card so a double-failure rollback can
+    // restore it from the closure rather than punting to the server.
+    const original = row.card;
     upsert({
-      ...row.card,
-      frontmatter: { ...row.card.frontmatter, stakes: targetStakes },
+      ...original,
+      frontmatter: { ...original.frontmatter, stakes: targetStakes },
     });
     try {
       const updated = await api.patchCardFrontmatter(id, {
@@ -150,16 +169,19 @@ export function Grid({ rates }: Props) {
       upsert(updated);
       setPatchError(null);
     } catch (err) {
-      // Roll back to the server's truth on failure.
+      // Rollback: try the server first (most-authoritative), then
+      // fall back to the pre-drag snapshot if even that fetch fails.
+      // Strip `body` so we don't accidentally store CardDetail under
+      // the CardSummary contract.
       try {
         const fresh = await api.getCard(id);
-        upsert(fresh);
+        const { body: _body, ...summary } = fresh;
+        upsert(summary);
       } catch {
-        /* nothing better to do */
+        upsert(original);
       }
       setPatchError(err instanceof ApiError ? err.message : String(err));
     }
-    void newXNorm;
   };
 
   return (
@@ -198,6 +220,7 @@ export function Grid({ rates }: Props) {
             xAxis={xAxis}
             yAxis={yAxis}
             plotted={plotted}
+            justDraggedRef={justDraggedRef}
             onOpenCard={(id) => setOpenCard(id)}
           />
         </DndContext>
@@ -258,12 +281,14 @@ function Plot({
   xAxis,
   yAxis,
   plotted,
+  justDraggedRef,
   onOpenCard,
 }: {
   plotRef: React.MutableRefObject<HTMLDivElement | null>;
   xAxis: AxisKey;
   yAxis: AxisKey;
   plotted: PlottedRow[];
+  justDraggedRef: React.MutableRefObject<boolean>;
   onOpenCard: (id: string) => void;
 }) {
   const { setNodeRef: setDropRef } = useDroppable({ id: PLOT_ID });
@@ -288,6 +313,7 @@ function Plot({
         <PlottedTile
           key={row.card.id}
           row={row}
+          justDraggedRef={justDraggedRef}
           onOpenCard={onOpenCard}
         />
       ))}
@@ -297,9 +323,11 @@ function Plot({
 
 function PlottedTile({
   row,
+  justDraggedRef,
   onOpenCard,
 }: {
   row: PlottedRow;
+  justDraggedRef: React.MutableRefObject<boolean>;
   onOpenCard: (id: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -330,9 +358,12 @@ function PlottedTile({
       style={style}
       className="absolute h-7 w-7 rounded-full border border-black/30 shadow-md hover:scale-110 transition-transform"
       onClick={(e) => {
-        // Only treat clicks (no drag delta) as a card-open.
-        if (!isDragging) onOpenCard(row.card.id);
+        // Suppress the click that DOM fires after a real drag.
+        // isDragging is already false by this point; justDraggedRef
+        // is the reliable signal.
         e.preventDefault();
+        if (isDragging || justDraggedRef.current) return;
+        onOpenCard(row.card.id);
       }}
       title={`${cardTitle(row.card)} (${cardShortId(row.card)}) — ${QUADRANT_LABEL[quadrant]}`}
       {...listeners}
@@ -479,17 +510,4 @@ function UngraphedTray({
       </div>
     </div>
   );
-}
-
-function clamp01(v: number): number {
-  if (!Number.isFinite(v)) return 0;
-  return Math.min(1, Math.max(0, v));
-}
-
-function screenYFromMath(yMath: number): number {
-  return 1 - yMath;
-}
-
-function mathYFromScreen(yScreen: number): number {
-  return 1 - yScreen;
 }
