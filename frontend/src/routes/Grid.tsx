@@ -365,10 +365,10 @@ function PlottedTile({
         if (isDragging || justDraggedRef.current) return;
         onOpenCard(row.card.id);
       }}
-      title={`${cardTitle(row.card)} (${cardShortId(row.card)}) — ${QUADRANT_LABEL[quadrant]}`}
+      title={`${cardTitle(row.card)} (${cardShortId(row.card)}) -- ${QUADRANT_LABEL[quadrant]}`}
       {...listeners}
       {...attributes}
-      aria-label={`${cardTitle(row.card)} — ${quadrant}`}
+      aria-label={`${cardTitle(row.card)} -- ${quadrant}`}
     />
   );
 }

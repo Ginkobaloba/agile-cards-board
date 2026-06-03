@@ -165,10 +165,10 @@ export function classifyQuadrant(
 }
 
 export const QUADRANT_LABEL: Record<Quadrant, string> = {
-  priority: "High value / low spend — priority",
-  "do-carefully": "High value / high spend — do carefully",
-  backlog: "Low value / low spend — backlog",
-  cancel: "Low value / high spend — cancel or downtier",
+  priority: "High value / low spend -- priority",
+  "do-carefully": "High value / high spend -- do carefully",
+  backlog: "Low value / low spend -- backlog",
+  cancel: "Low value / high spend -- cancel or downtier",
 };
 
 /**
