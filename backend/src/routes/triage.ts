@@ -84,16 +84,25 @@ export function triageRouter(): Router {
       }
       try {
         const staged = readStagedCardForMerge(params.batchId, params.file);
-        const section = [
-          `## Absorbed from triage (${staged.id})`,
-          "",
-          `> ${staged.title} -- merged ${new Date().toISOString()}, batch ${params.batchId}`,
-          "",
-          staged.body,
-        ].join("\n");
-        appendToCardBody(targetId, section);
-        // Absorb succeeded; retire the staged file. Decline (move to
-        // _declined) rather than delete so the merge is reversible.
+        const marker = `## Absorbed from triage (${staged.id})`;
+        const target = getCard(targetId);
+        // Idempotent under retry: if a previous merge appended the
+        // section but the decline step then failed (a 500 the user
+        // retries), skip the append and just retire the staged file --
+        // otherwise the target grows a duplicate section per retry.
+        if (target && !target.raw.includes(marker)) {
+          const section = [
+            marker,
+            "",
+            `> ${staged.title} -- merged ${new Date().toISOString()}, batch ${params.batchId}`,
+            "",
+            staged.body,
+          ].join("\n");
+          appendToCardBody(targetId, section);
+        }
+        // Absorb succeeded (or already had); retire the staged file.
+        // Decline (move to _declined) rather than delete so the merge
+        // is reversible.
         declineTriageCard(params.batchId, params.file);
         res.json({ ok: true, targetId });
       } catch (err) {

@@ -40,6 +40,7 @@ import { log } from "../logger.js";
 import { generateBatchId, type Invoker, claudeCliInvoker } from "../stories/invoker.js";
 import {
   cleanupStaging,
+  markStagingReady,
   prepareStaging,
   promoteToBacklog,
   readStagedManifest,
@@ -297,6 +298,9 @@ async function runSubmit(
       manifest: finalManifest,
       expiresAt: Date.now() + PENDING_TTL_MS,
     });
+    // The planner is done writing; the triage inbox may now act on
+    // this batch per-card.
+    markStagingReady(batchId);
 
     write("dry_run", {
       batch_id: batchId,

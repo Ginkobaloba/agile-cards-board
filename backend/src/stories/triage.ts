@@ -29,7 +29,12 @@ import path from "node:path";
 
 import { config } from "../config.js";
 import { parseFrontmatter } from "../fs/frontmatter.js";
-import { backlogDir, batchesDirFor, stagingDirFor } from "./staging.js";
+import {
+  PLANNING_SENTINEL,
+  backlogDir,
+  batchesDirFor,
+  stagingDirFor,
+} from "./staging.js";
 
 /** Where declined staged cards are parked, per batch. */
 export function declinedDirFor(batchId: string): string {
@@ -40,6 +45,12 @@ const STAGING_ROOT = (): string => path.join(config.cardsDir, "_staging");
 
 /** Max characters of card body surfaced in the inbox list. */
 const EXCERPT_CHARS = 280;
+
+function batchIsPlanning(batchId: string): boolean {
+  return fs.existsSync(
+    path.join(stagingDirFor(batchId), PLANNING_SENTINEL)
+  );
+}
 
 export interface TriageCard {
   readonly id: string;
@@ -113,6 +124,7 @@ export function listTriage(): TriageBatch[] {
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const batchId = e.name;
+    if (batchIsPlanning(batchId)) continue;
     const cards = readStagedCards(batchId);
     if (cards.length === 0) continue;
     batches.push({
@@ -186,6 +198,12 @@ function readBatchStory(batchId: string): string | null {
 /** Resolve and existence-check one staged card file. */
 function stagedFilePath(batchId: string, fileName: string): string {
   assertSafe(batchId, fileName);
+  if (batchIsPlanning(batchId)) {
+    throw new TriageError(
+      409,
+      `batch ${batchId} is still being planned; try again when it lands`
+    );
+  }
   const file = path.join(stagingDirFor(batchId), fileName);
   if (!fs.existsSync(file)) {
     throw new TriageError(
@@ -236,7 +254,18 @@ export function declineTriageCard(batchId: string, fileName: string): void {
   const src = stagedFilePath(batchId, fileName);
   const dir = declinedDirFor(batchId);
   fs.mkdirSync(dir, { recursive: true });
-  fs.renameSync(src, path.join(dir, fileName));
+  // fs.rename silently replaces an existing destination on both POSIX
+  // and Windows. A previously-declined copy (e.g. the file was hand-
+  // resurrected into staging and declined again) must not be
+  // overwritten, so collide into a numbered sibling instead.
+  let dest = path.join(dir, fileName);
+  for (let n = 1; fs.existsSync(dest); n++) {
+    dest = path.join(
+      dir,
+      `${path.basename(fileName, ".md")}.${n}.md`
+    );
+  }
+  fs.renameSync(src, dest);
   finalizeBatchIfDrained(batchId);
 }
 
@@ -295,7 +324,12 @@ function finalizeBatchIfDrained(batchId: string): void {
         path.join(batchesTarget, "manifest.json")
       );
     } catch {
-      /* leave the manifest in place; rm below will keep the dir */
+      // Archive failed (e.g. an AV/indexer hold on Windows). KEEP the
+      // staging dir -- removing it here would delete the manifest the
+      // rename just failed to move. The card-less dir lingers with the
+      // manifest preserved (the inbox hides it); an operator can
+      // finish the archive by hand.
+      return;
     }
   }
   try {

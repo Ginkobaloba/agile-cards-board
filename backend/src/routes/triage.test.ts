@@ -131,7 +131,13 @@ describe("triage inbox routes", () => {
 
   after(async () => {
     await server.close();
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      // better-sqlite3 keeps test.sqlite open (getDb() is never
+      // closed), so Windows reports EBUSY here. The OS temp dir is
+      // disposable; matching cards.test.ts.
+    }
   });
 
   beforeEach(() => {
@@ -308,6 +314,95 @@ describe("triage inbox routes", () => {
       `${server.url}/api/triage/ghost/cards/ghost.md/promote`
     );
     assert.equal(status, 404);
+  });
+
+  test("a batch still being planned is hidden and untouchable", async () => {
+    seedStagedCard("b700", "b700-01.md", "b700-01", "Half written");
+    fs.writeFileSync(
+      path.join(tmpRoot, "_staging", "b700", ".planning"),
+      "",
+      "utf8"
+    );
+
+    const list = await jsonReq("GET", `${server.url}/api/triage`);
+    assert.deepEqual(list.json, { batches: [] });
+
+    const { status } = await jsonReq(
+      "POST",
+      `${server.url}/api/triage/b700/cards/b700-01.md/promote`
+    );
+    assert.equal(status, 409);
+    assert.ok(
+      fs.existsSync(path.join(tmpRoot, "_staging", "b700", "b700-01.md"))
+    );
+  });
+
+  test("declining onto an existing declined file collides into a numbered sibling", async () => {
+    fs.mkdirSync(path.join(tmpRoot, "_declined", "b800"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmpRoot, "_declined", "b800", "b800-01.md"),
+      "earlier declined copy",
+      "utf8"
+    );
+    seedStagedCard("b800", "b800-01.md", "b800-01", "Declined twice");
+
+    const { status } = await jsonReq(
+      "POST",
+      `${server.url}/api/triage/b800/cards/b800-01.md/decline`
+    );
+    assert.equal(status, 200);
+    assert.equal(
+      fs.readFileSync(
+        path.join(tmpRoot, "_declined", "b800", "b800-01.md"),
+        "utf8"
+      ),
+      "earlier declined copy"
+    );
+    assert.ok(
+      fs.existsSync(path.join(tmpRoot, "_declined", "b800", "b800-01.1.md"))
+    );
+  });
+
+  test("merge retry does not duplicate the absorbed section", async () => {
+    seedStagedCard(
+      "b900",
+      "b900-01.md",
+      "b900-01",
+      "Retry merge",
+      "Body once."
+    );
+    const first = await jsonReq(
+      "POST",
+      `${server.url}/api/triage/b900/cards/b900-01.md/merge`,
+      { targetId: "existing-01" }
+    );
+    assert.equal(first.status, 200);
+
+    // Simulate the retry-after-partial-failure path: the staged file
+    // reappears (as if decline had failed) and the user merges again.
+    seedStagedCard(
+      "b900",
+      "b900-01.md",
+      "b900-01",
+      "Retry merge",
+      "Body once."
+    );
+    const second = await jsonReq(
+      "POST",
+      `${server.url}/api/triage/b900/cards/b900-01.md/merge`,
+      { targetId: "existing-01" }
+    );
+    assert.equal(second.status, 200);
+
+    const target = fs.readFileSync(
+      path.join(tmpRoot, "backlog", "existing-01.md"),
+      "utf8"
+    );
+    const occurrences =
+      target.split("## Absorbed from triage (b900-01)").length - 1;
+    assert.equal(occurrences, 1);
   });
 
   test("path traversal in the file segment is rejected", async () => {
