@@ -85,15 +85,16 @@ const pending = new Map<string, {
 const PENDING_TTL_MS = 60 * 60 * 1000;
 
 function reapExpired(): void {
+  // The TTL bounds only the in-memory dry-run record. Staged FILES are
+  // deliberately left on disk: since the triage inbox (roadmap 2.4)
+  // they are the durable pre-backlog lane, resolved per-card via
+  // /api/triage promote / merge / decline. Deleting them here (the
+  // pre-triage behavior) would silently destroy unreviewed planner
+  // output after an hour.
   const now = Date.now();
   for (const [batchId, entry] of pending) {
     if (entry.expiresAt < now) {
       pending.delete(batchId);
-      try {
-        cleanupStaging(batchId);
-      } catch {
-        /* swallow */
-      }
     }
   }
 }
